@@ -1,24 +1,42 @@
 #include <WiFi.h>
 
-// Replace with your network credentials
-const char* ssid     = "Project-Beer2";
-const char* password = "123456789";
+const char* ssid = "ESP32_Host";  // WiFi SSID for the SoftAP
+const char* password = "12345678";  // WiFi password (min. 8 characters)
 
-// // Set web server port number to 80
-WiFiServer server(80);
+WiFiServer server(8080);  // Create a TCP server on port 8080
+const int sensorPin = 34;  // Analog pin for the pressure sensor
 
 void setup() {
-  Serial.begin(115200);
+    Serial.begin(115200);
+    
+    // Set up ESP32 as an Access Point
+    WiFi.softAP(ssid, password);
+    Serial.print("SoftAP IP: ");
+    Serial.println(WiFi.softAPIP());
 
-  Serial.print("Setting AP (Access Point)…");
-  WiFi.softAP(ssid, password);
-
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
-  Serial.println(IP);
-  
-  server.begin();
+    server.begin();  // Start TCP server
 }
 
 void loop() {
+    WiFiClient client = server.available();  // Check for client connection
+    
+    if (client) {
+        Serial.println("Client connected.");
+        while (client.connected()) {
+            int sensorValue = analogRead(sensorPin);  // Read pressure sensor
+            
+            Serial.print("Sending data: ");
+            Serial.println(sensorValue);
+
+            client.print(sensorValue);  // Send data to client
+            client.print("\n");  // Ensure each value is on a new line
+
+            String data = client.readStringUntil('\n');
+            Serial.println(data);
+            
+            delay(500);  // Send data every 500ms
+        }
+        Serial.println("Client disconnected.");
+        client.stop();  // Close the connection
+    }
 }
