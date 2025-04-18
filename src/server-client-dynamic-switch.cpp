@@ -8,6 +8,7 @@ const char* hostIP = "192.168.4.1";
 const int port = 8080;
 
 const int sensorPin = 34;
+const int buttonPin = 14;
 const int relayPin = 12;
 const int threshold = 150;
 const unsigned long sensorInterval = 500;
@@ -64,15 +65,19 @@ void startAsServer() {
   server.begin();
 }
 
-void sendSensorData() {
+void sendSensorAndButton() {
   unsigned long now = millis();
   if (now - lastSensorMillis >= sensorInterval) {
     int sensorValue = analogRead(sensorPin);
-    Serial.print("Sending sensor data: ");
-    Serial.println(sensorValue);
+    int buttonState = digitalRead(buttonPin);
 
-    client.print(sensorValue);
-    client.print("\n");
+    Serial.print("Sending -> Sensor: ");
+    Serial.print(sensorValue);
+    Serial.print(", Button: ");
+    Serial.println(buttonState);
+
+    // Format: "sensor,button\n"
+    client.printf("%d,%d\n", sensorValue, buttonState);
 
     lastSensorMillis = now;
   }
@@ -80,14 +85,24 @@ void sendSensorData() {
 
 void receiveAndControlRelay() {
   while (client.available()) {
-    String sensorData = client.readStringUntil('\n');
-    int pressure = sensorData.toInt();
+    String dataLine = client.readStringUntil('\n');
+    int sepIndex = dataLine.indexOf(',');
 
-    Serial.print("Received sensor value: ");
-    Serial.println(pressure);
+    if (sepIndex > 0) {
+      int remoteSensor = dataLine.substring(0, sepIndex).toInt();
+      int remoteButton = dataLine.substring(sepIndex + 1).toInt();
 
-    digitalWrite(relayPin, pressure >= threshold ? HIGH : LOW);
-    Serial.println(pressure >= threshold ? "Relay ON" : "Relay OFF");
+      Serial.print("Received -> Sensor: ");
+      Serial.print(remoteSensor);
+      Serial.print(", Button: ");
+      Serial.println(remoteButton);
+
+      // Relay logic based on remote sensor
+      digitalWrite(relayPin, remoteSensor >= threshold ? HIGH : LOW);
+      Serial.println(remoteSensor >= threshold ? "Relay ON" : "Relay OFF");
+    } else {
+      Serial.println("Invalid data format received.");
+    }
   }
 }
 
@@ -115,6 +130,7 @@ void checkClientConnection() {
 void setup() {
   Serial.begin(115200);
   pinMode(relayPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);  // Adjust as needed
   digitalWrite(relayPin, LOW);
 
   connectToWiFiAsClient();
@@ -124,10 +140,10 @@ void setup() {
 
 void loop() {
   if (clientConnected) {
-    sendSensorData();         // Send your own sensor data
-    receiveAndControlRelay(); // Act on received data
+    sendSensorAndButton();      // Send sensor + button state
+    receiveAndControlRelay();   // Act on remote sensor data
   }
 
-  checkForNewClient();        // Accept new connections (if server)
-  checkClientConnection();    // Clean up disconnected client
+  checkForNewClient();
+  checkClientConnection();
 }
