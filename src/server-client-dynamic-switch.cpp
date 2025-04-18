@@ -10,7 +10,6 @@ const int port = 8080;
 const int sensorPin = 34;
 const int relayPin = 12;
 const int threshold = 150;
-
 const unsigned long sensorInterval = 500;
 
 /* ------------------- GLOBALS ------------------- */
@@ -39,9 +38,8 @@ void connectToWiFiAsClient() {
   if (hostFound) {
     Serial.println("Host found! Connecting as client...");
     WiFi.begin(ssid, password);
-
     while (WiFi.status() != WL_CONNECTED) {
-      delay(500);  // Only in setup
+      delay(500);  // setup only
       Serial.print(".");
     }
 
@@ -66,19 +64,7 @@ void startAsServer() {
   server.begin();
 }
 
-void handleIncomingSensorData() {
-  if (client.available()) {
-    String sensorData = client.readStringUntil('\n');
-    Serial.print("Received sensor data: ");
-    Serial.println(sensorData);
-
-    int pressure = sensorData.toInt();
-    digitalWrite(relayPin, pressure >= threshold ? HIGH : LOW);
-    Serial.println(pressure >= threshold ? "Relay ON" : "Relay OFF");
-  }
-}
-
-void handleSensorSending() {
+void sendSensorData() {
   unsigned long now = millis();
   if (now - lastSensorMillis >= sensorInterval) {
     int sensorValue = analogRead(sensorPin);
@@ -89,6 +75,19 @@ void handleSensorSending() {
     client.print("\n");
 
     lastSensorMillis = now;
+  }
+}
+
+void receiveAndControlRelay() {
+  while (client.available()) {
+    String sensorData = client.readStringUntil('\n');
+    int pressure = sensorData.toInt();
+
+    Serial.print("Received sensor value: ");
+    Serial.println(pressure);
+
+    digitalWrite(relayPin, pressure >= threshold ? HIGH : LOW);
+    Serial.println(pressure >= threshold ? "Relay ON" : "Relay OFF");
   }
 }
 
@@ -125,13 +124,10 @@ void setup() {
 
 void loop() {
   if (clientConnected) {
-    if (WiFi.getMode() == WIFI_STA) {
-      handleIncomingSensorData();
-    } else {
-      handleSensorSending();
-    }
+    sendSensorData();         // Send your own sensor data
+    receiveAndControlRelay(); // Act on received data
   }
 
-  checkForNewClient();
-  checkClientConnection();
+  checkForNewClient();        // Accept new connections (if server)
+  checkClientConnection();    // Clean up disconnected client
 }
