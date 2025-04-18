@@ -23,7 +23,7 @@ unsigned long lastSensorMillis = 0;
 
 /* ------------------- FUNCTIONS ------------------- */
 
-/// @brief This function will scan for hosts, if none are found, it will start as a server
+/// @brief This function will scan for hosts, if none are found, it will start as a server.
 void connectToWiFiAsClient() {
   WiFi.mode(WIFI_STA);
   Serial.println("Scanning for Host...");
@@ -58,7 +58,7 @@ void connectToWiFiAsClient() {
   }
 }
 
-/// @brief Starts the device as a server
+/// @brief Starts the device as a server.
 void startAsServer() {
   Serial.println("No host found. Setting up as server...");
   WiFi.softAP(ssid, password);
@@ -67,7 +67,7 @@ void startAsServer() {
   server.begin();
 }
 
-/// @brief Send Sensor Data and Button State to other device
+/// @brief Send Sensor Data and Button State to other device.
 void sendSensorAndButton() {
   unsigned long now = millis();
   if (now - lastSensorMillis >= sensorInterval) {
@@ -86,7 +86,7 @@ void sendSensorAndButton() {
   }
 }
 
-/// @brief Process received data and act on it
+/// @brief Process received data and act on it.
 void receiveAndControlRelay() {
   while (client.available()) {
     String dataLine = client.readStringUntil('\n');
@@ -104,6 +104,9 @@ void receiveAndControlRelay() {
       // Relay logic based on remote sensor
       digitalWrite(relayPin, remoteSensor >= threshold ? HIGH : LOW);
       Serial.println(remoteSensor >= threshold ? "Relay ON" : "Relay OFF");
+
+      // TODO: Add in logic to control Vibration element
+      
     } else {
       Serial.println("Invalid data format received.");
     }
