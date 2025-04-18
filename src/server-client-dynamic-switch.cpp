@@ -1,115 +1,137 @@
 #include <WiFi.h>
 
+/* ------------------- CONFIG ------------------- */
 
-/* ------------------- VARIABLES ------------------- */
+const char* ssid = "ESP32_Host";
+const char* password = "12345678";
+const char* hostIP = "192.168.4.1";
+const int port = 8080;
 
-const char* ssid = "ESP32_Host";  // Host's SSID
-const char* password = "12345678";  // Host password
-const char* hostIP = "192.168.4.1";  // Default SoftAP IP for the host
-const int port = 8080;  // Port for communication
-const int sensorPin = 34;  // Pressure sensor pin
-const int relayPin = 12;  // Relay pin
-const int threshold = 150;  // Threshold for relay activation
+const int sensorPin = 34;
+const int relayPin = 12;
+const int threshold = 150;
 
-WiFiServer server(port);  // Server to handle incoming client connections
-WiFiClient client;  // Client for connecting to the host
+const unsigned long sensorInterval = 500;
+
+/* ------------------- GLOBALS ------------------- */
+
+WiFiServer server(port);
+WiFiClient client;
+
+bool clientConnected = false;
+unsigned long lastSensorMillis = 0;
+
+/* ------------------- FUNCTIONS ------------------- */
+
+void connectToWiFiAsClient() {
+  WiFi.mode(WIFI_STA);
+  Serial.println("Scanning for Host...");
+
+  bool hostFound = false;
+  int numNetworks = WiFi.scanNetworks();
+  for (int i = 0; i < numNetworks; ++i) {
+    if (WiFi.SSID(i) == ssid) {
+      hostFound = true;
+      break;
+    }
+  }
+
+  if (hostFound) {
+    Serial.println("Host found! Connecting as client...");
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);  // Only in setup
+      Serial.print(".");
+    }
+
+    Serial.println("\nConnected to Host!");
+
+    if (client.connect(hostIP, port)) {
+      Serial.println("Connected to Host Server.");
+      clientConnected = true;
+    } else {
+      Serial.println("Connection to Host failed.");
+    }
+  } else {
+    startAsServer();
+  }
+}
+
+void startAsServer() {
+  Serial.println("No host found. Setting up as server...");
+  WiFi.softAP(ssid, password);
+  Serial.print("Server IP: ");
+  Serial.println(WiFi.softAPIP());
+  server.begin();
+}
+
+void handleIncomingSensorData() {
+  if (client.available()) {
+    String sensorData = client.readStringUntil('\n');
+    Serial.print("Received sensor data: ");
+    Serial.println(sensorData);
+
+    int pressure = sensorData.toInt();
+    digitalWrite(relayPin, pressure >= threshold ? HIGH : LOW);
+    Serial.println(pressure >= threshold ? "Relay ON" : "Relay OFF");
+  }
+}
+
+void handleSensorSending() {
+  unsigned long now = millis();
+  if (now - lastSensorMillis >= sensorInterval) {
+    int sensorValue = analogRead(sensorPin);
+    Serial.print("Sending sensor data: ");
+    Serial.println(sensorValue);
+
+    client.print(sensorValue);
+    client.print("\n");
+
+    lastSensorMillis = now;
+  }
+}
+
+void checkForNewClient() {
+  if (!clientConnected && WiFi.status() == WL_CONNECTED) {
+    WiFiClient newClient = server.available();
+    if (newClient) {
+      Serial.println("Client connected.");
+      client = newClient;
+      clientConnected = true;
+    }
+  }
+}
+
+void checkClientConnection() {
+  if (clientConnected && !client.connected()) {
+    Serial.println("Client disconnected.");
+    client.stop();
+    clientConnected = false;
+  }
+}
 
 /* ------------------- SETUP ------------------- */
 
 void setup() {
-    Serial.begin(115200);
-    pinMode(relayPin, OUTPUT);
-    digitalWrite(relayPin, LOW);  // Make sure relay is off at startup
+  Serial.begin(115200);
+  pinMode(relayPin, OUTPUT);
+  digitalWrite(relayPin, LOW);
 
-    // Try to connect as a client first by scanning for the host
-    WiFi.mode(WIFI_STA);  // Set Wi-Fi mode to station (client)
-    Serial.println("Scanning for Host...");
-
-    int numNetworks = WiFi.scanNetworks();  // Scan for available networks
-    bool hostFound = false;
-
-    // Look for the host's SSID in the scanned networks
-    for (int i = 0; i < numNetworks; i++) {
-        if (WiFi.SSID(i) == ssid) {
-            hostFound = true;
-            break;
-        }
-    }
-
-    if (hostFound) {
-        Serial.println("Host found! Connecting as client...");
-        WiFi.begin(ssid, password);  // Connect to the Host's AP
-
-        while (WiFi.status() != WL_CONNECTED) {
-            delay(500);
-            Serial.print(".");
-        }
-        Serial.println("\nConnected to Host!");
-
-        // Connect to the host server
-        if (client.connect(hostIP, port)) {
-            Serial.println("Connected to Host Server.");
-        } else {
-            Serial.println("Connection to Host failed.");
-        }
-    } else {
-        Serial.println("No host found. Setting up as server...");
-        // Set the ESP32 as an Access Point (Server)
-        WiFi.softAP(ssid, password);
-        Serial.print("Server IP: ");
-        Serial.println(WiFi.softAPIP());
-
-        server.begin();  // Start the server
-    }
+  connectToWiFiAsClient();
 }
 
 /* ------------------- LOOP ------------------- */
 
 void loop() {
-    // Check if in client mode
-    if (WiFi.status() == WL_CONNECTED && client.connected()) {
-        // Client side code: receive sensor data and control relay
-        if (client.available()) {
-            String sensorData = client.readStringUntil('\n');  // Read the sensor data
-            Serial.print("Received sensor data: ");
-            Serial.println(sensorData);
-
-            int pressureValue = sensorData.toInt();  // Convert to integer
-
-            if (pressureValue >= threshold) {
-                Serial.println("Threshold exceeded! Turning relay ON.");
-                digitalWrite(relayPin, HIGH);  // Turn relay on
-            } else {
-                Serial.println("Below threshold. Relay OFF.");
-                digitalWrite(relayPin, LOW);  // Turn relay off
-            }
-        }
+  if (clientConnected) {
+    if (WiFi.getMode() == WIFI_STA) {
+      handleIncomingSensorData();
+    } else {
+      handleSensorSending();
     }
-    
-    // Check if in server mode (waiting for a client connection)
-    if (WiFi.status() == WL_CONNECTED && !client.connected()) {
-        WiFiClient newClient = server.available();  // Check if a client is trying to connect
-        if (newClient) {
-            Serial.println("Client connected.");
-            client = newClient;  // Update the client object with the new client
-        }
-    }
-    
-    // Server side: send sensor data to the client
-    if (WiFi.status() == WL_CONNECTED && client.connected()) {
-        int sensorValue = analogRead(sensorPin);  // Read sensor data
-        Serial.print("Sending sensor data: ");
-        Serial.println(sensorValue);
+  }
 
-        client.write(sensorValue);  // Send data to the client
-        client.write("\n");         // Send end of line.
-
-        delay(500);  // Send data every 500ms
-    }
-    
-    // If client is disconnected, stop the connection
-    if (!client.connected()) {
-        Serial.println("Client disconnected.");
-        client.stop();
-    }
+  checkForNewClient();
+  checkClientConnection();
 }
