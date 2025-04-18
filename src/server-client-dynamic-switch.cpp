@@ -23,6 +23,7 @@ unsigned long lastSensorMillis = 0;
 
 /* ------------------- FUNCTIONS ------------------- */
 
+/// @brief This function will scan for hosts, if none are found, it will start as a server
 void connectToWiFiAsClient() {
   WiFi.mode(WIFI_STA);
   Serial.println("Scanning for Host...");
@@ -57,6 +58,7 @@ void connectToWiFiAsClient() {
   }
 }
 
+/// @brief Starts the device as a server
 void startAsServer() {
   Serial.println("No host found. Setting up as server...");
   WiFi.softAP(ssid, password);
@@ -65,6 +67,7 @@ void startAsServer() {
   server.begin();
 }
 
+/// @brief Send Sensor Data and Button State to other device
 void sendSensorAndButton() {
   unsigned long now = millis();
   if (now - lastSensorMillis >= sensorInterval) {
@@ -83,6 +86,7 @@ void sendSensorAndButton() {
   }
 }
 
+/// @brief Process received data and act on it
 void receiveAndControlRelay() {
   while (client.available()) {
     String dataLine = client.readStringUntil('\n');
@@ -106,6 +110,7 @@ void receiveAndControlRelay() {
   }
 }
 
+/// @brief Check for new client and connect. Only 1 client can be connected at a time.
 void checkForNewClient() {
   if (!clientConnected && WiFi.status() == WL_CONNECTED) {
     WiFiClient newClient = server.available();
@@ -117,6 +122,7 @@ void checkForNewClient() {
   }
 }
 
+/// @brief Check if client is still connected. If not reset to allow for a new client.
 void checkClientConnection() {
   if (clientConnected && !client.connected()) {
     Serial.println("Client disconnected.");
