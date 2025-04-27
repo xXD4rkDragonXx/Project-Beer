@@ -1,5 +1,11 @@
 #include <WiFi.h>
 
+/*****************************************************************
+ * This the the most complete version of the code.               *
+ * It allows for dynamic switching between host and client.      *
+ * Added logic for vibration motor when remote button is pressed *
+ *****************************************************************/
+
 /* ------------------- CONFIG ------------------- */
 
 const char* ssid = "ESP32_Host";
@@ -8,8 +14,9 @@ const char* hostIP = "192.168.4.1";
 const int port = 8080;
 
 const int sensorPin = 34;
-const int buttonPin = 14;
-const int relayPin = 12;
+const int buttonPin = 23;
+const int relayPin = 16;
+const int vibrationPin = 4;
 const int threshold = 150;
 const unsigned long sensorInterval = 500;
 
@@ -106,6 +113,9 @@ void receiveAndControlRelay() {
       Serial.println(remoteSensor >= threshold ? "Relay ON" : "Relay OFF");
 
       // TODO: Add in logic to control Vibration element
+      digitalWrite(vibrationPin, remoteButton == LOW ? HIGH : LOW); // Vibrate if remote button is pressed
+      Serial.println(remoteButton == LOW ? "Vibration ON" : "Vibration OFF");
+
       
     } else {
       Serial.println("Invalid data format received.");
@@ -115,7 +125,7 @@ void receiveAndControlRelay() {
 
 /// @brief Check for new client and connect. Only 1 client can be connected at a time.
 void checkForNewClient() {
-  if (!clientConnected && WiFi.status() == WL_CONNECTED) {
+  if (!clientConnected) {
     WiFiClient newClient = server.available();
     if (newClient) {
       Serial.println("Client connected.");
@@ -140,6 +150,8 @@ void setup() {
   Serial.begin(115200);
   pinMode(relayPin, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);  // Adjust as needed
+  pinMode(vibrationPin, OUTPUT);
+  digitalWrite(vibrationPin, LOW); // Ensure it's off at start
   digitalWrite(relayPin, LOW);
 
   connectToWiFiAsClient();
