@@ -10,15 +10,18 @@
 
 const char* ssid = "ESP32_Host";
 const char* password = "12345678";
-const char* hostIP = "192.168.4.1";
 const int port = 8080;
 
 const int sensorPin = 34;
 const int buttonPin = 23;
 const int relayPin = 16;
 const int vibrationPin = 4;
+const int ledPin = 2;  // Built-in LED
+
 const int threshold = 150;
 const unsigned long sensorInterval = 500;
+const unsigned long blinkLong = 800;
+const int retries = 5; 
 
 /* ------------------- GLOBALS ------------------- */
 
@@ -27,54 +30,88 @@ WiFiClient client;
 
 bool clientConnected = false;
 unsigned long lastSensorMillis = 0;
+unsigned long lastBlink = 0;
+bool ledState = false;
+
+enum ConnectionState { SERVER_MODE, CONNECTED };
+ConnectionState currentState = SERVER_MODE;
 
 /* ------------------- FUNCTIONS ------------------- */
 
-/// @brief This function will scan for hosts, if none are found, it will start as a server.
-void connectToWiFiAsClient() {
-  WiFi.mode(WIFI_STA);
-  Serial.println("Scanning for Host...");
+void handleLEDStatus() {
+  unsigned long now = millis();
 
-  bool hostFound = false;
-  int numNetworks = WiFi.scanNetworks();
-  for (int i = 0; i < numNetworks; ++i) {
-    if (WiFi.SSID(i) == ssid) {
-      hostFound = true;
-      break;
-    }
-  }
-
-  if (hostFound) {
-    Serial.println("Host found! Connecting as client...");
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);  // setup only
-      Serial.print(".");
-    }
-
-    Serial.println("\nConnected to Host!");
-
-    if (client.connect(hostIP, port)) {
-      Serial.println("Connected to Host Server.");
-      clientConnected = true;
-    } else {
-      Serial.println("Connection to Host failed.");
-    }
+  if (currentState == CONNECTED) {
+    digitalWrite(ledPin, HIGH);
   } else {
-    startAsServer();
+    // Only blink if in server mode
+    if (now - lastBlink >= blinkLong) {
+      ledState = !ledState;
+      digitalWrite(ledPin, ledState ? HIGH : LOW);
+      lastBlink = now;
+    }
   }
 }
 
-/// @brief Starts the device as a server.
 void startAsServer() {
-  Serial.println("No host found. Setting up as server...");
+  Serial.println("Starting as Server...");
+  WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, password);
-  Serial.print("Server IP: ");
+  delay(500);
+  Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
   server.begin();
+  currentState = SERVER_MODE;
 }
 
-/// @brief Send Sensor Data and Button State to other device.
+void attemptAutoPairing() {
+  WiFi.mode(WIFI_STA);
+  bool connected = false;
+
+  for (int attempt = 0; attempt < retries && !connected; ++attempt) {
+    Serial.printf("Client Attempt #%d to find host...\n", attempt + 1);
+
+    int numNetworks = WiFi.scanNetworks();
+    bool hostFound = false;
+    for (int i = 0; i < numNetworks; ++i) {
+      if (WiFi.SSID(i) == ssid) {
+        hostFound = true;
+        break;
+      }
+    }
+
+    if (hostFound) {
+      Serial.println("Host found! Connecting as client...");
+      WiFi.begin(ssid, password);
+      unsigned long startAttempt = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 10000) {
+        delay(50); // Short delay to prevent overload
+      }
+
+      if (WiFi.status() == WL_CONNECTED) {
+        delay(1000);
+        if (client.connect(WiFi.gatewayIP(), port)) {
+          Serial.println("\nConnected to host server as client!");
+          clientConnected = true;
+          currentState = CONNECTED;
+          return;
+        } else {
+          Serial.println("\nFailed to connect to host socket.");
+          WiFi.disconnect();
+        }
+      } else {
+        Serial.println("\nWiFi connection to host failed.");
+      }
+    } else {
+      Serial.println("No host SSID found.");
+    }
+
+    delay(1000);
+  }
+
+  startAsServer();
+}
+
 void sendSensorAndButton() {
   unsigned long now = millis();
   if (now - lastSensorMillis >= sensorInterval) {
@@ -86,14 +123,11 @@ void sendSensorAndButton() {
     Serial.print(", Button: ");
     Serial.println(buttonState);
 
-    // Format: "sensor,button\n"
     client.printf("%d,%d\n", sensorValue, buttonState);
-
     lastSensorMillis = now;
   }
 }
 
-/// @brief Process received data and act on it.
 void receiveAndControlRelay() {
   while (client.available()) {
     String dataLine = client.readStringUntil('\n');
@@ -108,22 +142,17 @@ void receiveAndControlRelay() {
       Serial.print(", Button: ");
       Serial.println(remoteButton);
 
-      // Relay logic based on remote sensor
       digitalWrite(relayPin, remoteSensor >= threshold ? HIGH : LOW);
       Serial.println(remoteSensor >= threshold ? "Relay ON" : "Relay OFF");
 
-      // TODO: Add in logic to control Vibration element
-      digitalWrite(vibrationPin, remoteButton == LOW ? HIGH : LOW); // Vibrate if remote button is pressed
+      digitalWrite(vibrationPin, remoteButton == LOW ? HIGH : LOW);
       Serial.println(remoteButton == LOW ? "Vibration ON" : "Vibration OFF");
-
-      
     } else {
       Serial.println("Invalid data format received.");
     }
   }
 }
 
-/// @brief Check for new client and connect. Only 1 client can be connected at a time.
 void checkForNewClient() {
   if (!clientConnected) {
     WiFiClient newClient = server.available();
@@ -131,16 +160,17 @@ void checkForNewClient() {
       Serial.println("Client connected.");
       client = newClient;
       clientConnected = true;
+      currentState = CONNECTED;
     }
   }
 }
 
-/// @brief Check if client is still connected. If not reset to allow for a new client.
 void checkClientConnection() {
   if (clientConnected && !client.connected()) {
     Serial.println("Client disconnected.");
     client.stop();
     clientConnected = false;
+    currentState = SERVER_MODE;
   }
 }
 
@@ -149,22 +179,35 @@ void checkClientConnection() {
 void setup() {
   Serial.begin(115200);
   pinMode(relayPin, OUTPUT);
-  pinMode(buttonPin, INPUT_PULLUP);  // Adjust as needed
+  pinMode(buttonPin, INPUT_PULLUP);
   pinMode(vibrationPin, OUTPUT);
-  digitalWrite(vibrationPin, LOW); // Ensure it's off at start
-  digitalWrite(relayPin, LOW);
+  pinMode(ledPin, OUTPUT);
 
-  connectToWiFiAsClient();
+  digitalWrite(vibrationPin, LOW);
+  digitalWrite(relayPin, LOW);
+  digitalWrite(ledPin, LOW);
+
+  attemptAutoPairing();
 }
 
 /* ------------------- LOOP ------------------- */
 
 void loop() {
   if (clientConnected) {
-    sendSensorAndButton();      // Send sensor + button state
-    receiveAndControlRelay();   // Act on remote sensor data
+    sendSensorAndButton();
+    receiveAndControlRelay();
   }
 
   checkForNewClient();
   checkClientConnection();
+
+  static unsigned long lastRetry = millis();
+  if (!clientConnected && WiFi.getMode() == WIFI_AP && millis() - lastRetry > 15000) {
+    Serial.println("Retrying auto-pairing...");
+    WiFi.softAPdisconnect(true);
+    attemptAutoPairing();
+    lastRetry = millis();
+  }
+
+  handleLEDStatus();
 }
